@@ -1,0 +1,53 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: socketscale
+      POSTGRES_USER: socketscale
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-demo-password}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U socketscale -d socketscale"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  gateway-a: &gateway
+    build: ./backend
+    environment:
+      INSTANCE_ID: gateway-a
+      DATABASE_URL: postgresql+asyncpg://socketscale:${POSTGRES_PASSWORD:-local-demo-password}@postgres:5432/socketscale
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET: ${JWT_SECRET:-replace-this-local-demo-secret}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+  gateway-b:
+    <<: *gateway
+    environment:
+      INSTANCE_ID: gateway-b
+      DATABASE_URL: postgresql+asyncpg://socketscale:${POSTGRES_PASSWORD:-local-demo-password}@postgres:5432/socketscale
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET: ${JWT_SECRET:-replace-this-local-demo-secret}
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - gateway-a
+      - gateway-b
+    restart: unless-stopped
+volumes:
+  postgres_data:
