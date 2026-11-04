@@ -1,53 +1,100 @@
 services:
+  frontend:
+    container_name: socketscale-frontend
+    restart: unless-stopped
+    build: ./frontend
+
+  gateway-a:
+    container_name: socketscale-gateway-a
+    restart: unless-stopped
+    build: ./backend
+    environment: &backend-env
+      INSTANCE_ID: gateway-a
+      DATABASE_URL: postgresql+psycopg://socketscale:socketscale@postgres:5432/socketscale
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET: ${JWT_SECRET:-local-demo-secret-change-me}
+      FAULT_ADMIN_TOKEN: ${FAULT_ADMIN_TOKEN:-local-fault-token-change-me}
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_started}
+
+  gateway-b:
+    container_name: socketscale-gateway-b
+    restart: unless-stopped
+    build: ./backend
+    environment:
+      <<: *backend-env
+      INSTANCE_ID: gateway-b
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_started}
+
+  gateway-c:
+    container_name: socketscale-gateway-c
+    restart: unless-stopped
+    build: ./backend
+    environment:
+      <<: *backend-env
+      INSTANCE_ID: gateway-c
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_started}
+
+  worker:
+    container_name: socketscale-worker
+    restart: unless-stopped
+    build: ./backend
+    command: ["python", "-m", "app.worker"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://socketscale:socketscale@postgres:5432/socketscale
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_started}
+
+  fault-agent:
+    container_name: socketscale-fault-agent
+    restart: unless-stopped
+    build: ./fault-agent
+    environment:
+      ADMIN_TOKEN: ${FAULT_ADMIN_TOKEN:-local-fault-token-change-me}
+      JWT_SECRET: ${JWT_SECRET:-local-demo-secret-change-me}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./nginx:/app/nginx:rw
+
+  nginx:
+    container_name: socketscale-nginx
+    restart: unless-stopped
+    image: nginx:1.27-alpine
+    ports: ["8080:80"]
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/upstreams.conf:/etc/nginx/conf.d/upstreams.conf:rw
+    depends_on: [frontend, gateway-a, gateway-b, gateway-c, fault-agent]
+
   postgres:
+    container_name: socketscale-postgres
+    restart: unless-stopped
     image: postgres:16-alpine
     environment:
-      POSTGRES_DB: socketscale
       POSTGRES_USER: socketscale
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-demo-password}
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
+      POSTGRES_PASSWORD: socketscale
+      POSTGRES_DB: socketscale
+    volumes: [pgdata:/var/lib/postgresql/data]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U socketscale -d socketscale"]
       interval: 5s
       timeout: 3s
-      retries: 20
+      retries: 15
+
   redis:
+    container_name: socketscale-redis
+    restart: unless-stopped
     image: redis:7-alpine
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
-  gateway-a: &gateway
-    build: ./backend
-    environment:
-      INSTANCE_ID: gateway-a
-      DATABASE_URL: postgresql+asyncpg://socketscale:${POSTGRES_PASSWORD:-local-demo-password}@postgres:5432/socketscale
-      REDIS_URL: redis://redis:6379/0
-      JWT_SECRET: ${JWT_SECRET:-replace-this-local-demo-secret}
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    restart: unless-stopped
-  gateway-b:
-    <<: *gateway
-    environment:
-      INSTANCE_ID: gateway-b
-      DATABASE_URL: postgresql+asyncpg://socketscale:${POSTGRES_PASSWORD:-local-demo-password}@postgres:5432/socketscale
-      REDIS_URL: redis://redis:6379/0
-      JWT_SECRET: ${JWT_SECRET:-replace-this-local-demo-secret}
-  nginx:
-    image: nginx:1.27-alpine
-    ports:
-      - "8080:80"
-    volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-    depends_on:
-      - gateway-a
-      - gateway-b
-    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: [redisdata:/data]
+
 volumes:
-  postgres_data:
+  pgdata:
+  redisdata:

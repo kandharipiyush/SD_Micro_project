@@ -1,0 +1,21 @@
+{
+  "clients": 50,
+  "messages_per_client": 20,
+  "expected_messages": 1000,
+  "connected_clients": 50,
+  "failed_connections": 0,
+  "acknowledged": 1000,
+  "failed_messages": 0,
+  "duration_seconds": 9.636,
+  "throughput_msg_per_sec": 103.78,
+  "mean_latency_ms": 213.18,
+  "median_latency_ms": 104.79,
+  "p95_latency_ms": 499.71,
+  "max_latency_ms": 529.84,
+  "gateway_distribution": {
+    "gateway-b": 25,
+    "gateway-a": 25
+  },
+  "errors_count": 0,
+  "sample_errors": []
+}

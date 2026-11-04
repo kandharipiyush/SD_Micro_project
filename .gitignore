@@ -1,13 +1,33 @@
+# Environment variables
 .env
+
+# Python
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
+*$py.class
+*.so
 .Python
-benchmark_results.json
-.venv/
 env/
 venv/
 ENV/
-.idea/
+.venv/
+
+# Node / Frontend
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Benchmarks & Logs
+benchmark_results.json
+*.log
+
+# Editor / IDE
 .vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
