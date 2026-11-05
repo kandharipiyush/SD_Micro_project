@@ -24,8 +24,8 @@
 ### Project Team Details
 | Student Name | Roll No. | Class / Division | Institute Email ID |
 |---|---|---|---|
-| **Mahek Ahuja** | 1 | D12A / Computer Engineering | mahek.ahuja@ves.ac.in |
-| **Piyush Kandhari** | 22 | D12A / Computer Engineering | piyush.kandhari@ves.ac.in |
+| **Mahek Ahuja** | 1 | D12A / Computer Engineering | 2024.mahek.ahuja@ves.ac.in |
+| **Piyush Kandhari** | 22 | D12A / Computer Engineering | 2024.piyush.kandhari@ves.ac.in |
 
 **Department of Computer Engineering**  
 **Academic Year:** 2025–2026  
