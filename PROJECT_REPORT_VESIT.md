@@ -16,7 +16,7 @@
 | **Course / Subject Name** | Distributed Computing / System Design |
 | **Course Code / Semester / Academic Year** | CSC601 / Semester VI / 2025–2026 |
 | **Faculty Incharge / Project Mentor** | Dr. Priya .R.L |
-| **Project Group No.** | Group 12 |
+| **Project Group No.** | Group 14 |
 | **Submission Date** | November 6, 2026 |
 
 ---
@@ -24,8 +24,8 @@
 ### Project Team Details
 | Student Name | Roll No. | Class / Division | Institute Email ID |
 |---|---|---|---|
-| **Mahek Ahuja** | 1 | D17A / Computer Engineering | mahek.ahuja@ves.ac.in |
-| **Piyush Kandhari** | 2 | D17A / Computer Engineering | piyush.kandhari@ves.ac.in |
+| **Mahek Ahuja** | 1 | D12A / Computer Engineering | mahek.ahuja@ves.ac.in |
+| **Piyush Kandhari** | 22 | D12A / Computer Engineering | piyush.kandhari@ves.ac.in |
 
 **Department of Computer Engineering**  
 **Academic Year:** 2025–2026  
@@ -479,7 +479,7 @@ Persistent audit trail tracking service lifecycles, user registrations, room cre
 | Team Member | Assigned Responsibility | Work Completed / Evidence |
 |---|---|---|
 | **Mahek Ahuja** (Roll No. 1) | **Backend Architecture & Database Engineering** | - Designed PostgreSQL schema, migrations, and model relationships.<br>- Implemented the **Transactional Outbox Worker** with retry policies.<br>- Implemented Argon2 password hashing and JWT token validation.<br>- Created automated integration test suite (`test_system.py`). |
-| **Piyush Kandhari** (Roll No. 2) | **DevOps, Gateway Cluster & Frontend Development** | - Configured Nginx dynamic least-connection upstream routing.<br>- Developed the Docker **Fault Agent** and dynamic scaling engine.<br>- Built the React 18 administrative dashboard and chat UI.<br>- Conducted benchmark stress tests and automated screenshot capture. |
+| **Piyush Kandhari** (Roll No. 22) | **DevOps, Gateway Cluster & Frontend Development** | - Configured Nginx dynamic least-connection upstream routing.<br>- Developed the Docker **Fault Agent** and dynamic scaling engine.<br>- Built the React 18 administrative dashboard and chat UI.<br>- Conducted benchmark stress tests and automated screenshot capture. |
 
 ---
 
@@ -636,3 +636,4 @@ All captured high-resolution demonstration screenshots are preserved in the proj
 - **Primary Branch:** `main`
 - **Container Orchestration File:** `docker-compose.yml`
 - **Application URL:** `http://localhost:8080`
+
