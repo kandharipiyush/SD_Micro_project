@@ -804,21 +804,24 @@ async def fault_stack(action: str, u: dict = Depends(admin_claims)):
         raise HTTPException(503, "Fault controller unavailable")
 
 # =========================================================
-# DYNAMIC BENCHMARKING ENGINE
+# DYNAMIC BENCHMARKING ENGINE (REDIS DISTRIBUTED)
 # =========================================================
-@app.post("/api/admin/benchmarks/run")
-async def run_live_benchmark(req: BenchmarkTrigger, u: User = Depends(admin_auth)):
-    clients_count = req.clients
-    msgs_per_client = req.messages_per_client
-    room_name = req.room.strip().lower()
+async def get_bench_state():
+    try:
+        raw = await redis.get("socketscale:benchmark:state")
+        if raw:
+            return json.loads(raw)
+    except Exception:
+        pass
+    return {"status": "idle", "progress": 0, "total": 0, "result": None, "error": None}
 
-    async with Session() as s:
-        existing = await s.scalar(select(Room).where(Room.name == room_name))
-        if not existing:
-            s.add(Room(name=room_name, is_private=False, created_by=u.username))
-            await s.commit()
+async def set_bench_state(data: dict):
+    try:
+        await redis.set("socketscale:benchmark:state", json.dumps(data), ex=3600)
+    except Exception:
+        pass
 
-    bench_token = create_access_token(u)
+async def _execute_benchmark_bg(clients_count: int, msgs_per_client: int, room_name: str, bench_token: str, expected: int, u_username: str):
     ws_target = f"ws://nginx:80/ws/{room_name}?token={bench_token}"
 
     latencies = []
@@ -829,8 +832,8 @@ async def run_live_benchmark(req: BenchmarkTrigger, u: User = Depends(admin_auth
 
     async def single_client(cid: int):
         try:
-            async with websockets.connect(ws_target, open_timeout=10, close_timeout=5) as ws:
-                greet_raw = await asyncio.wait_for(ws.recv(), timeout=8)
+            async with websockets.connect(ws_target, open_timeout=15, close_timeout=5) as ws:
+                greet_raw = await asyncio.wait_for(ws.recv(), timeout=10)
                 try:
                     greet = json.loads(greet_raw)
                     inst = greet.get("instance_id", "unknown")
@@ -846,12 +849,14 @@ async def run_live_benchmark(req: BenchmarkTrigger, u: User = Depends(admin_auth
                     }))
 
                     while True:
-                        resp_raw = await asyncio.wait_for(ws.recv(), timeout=20)
+                        resp_raw = await asyncio.wait_for(ws.recv(), timeout=35)
                         ev = json.loads(resp_raw)
                         if ev.get("type") == "ack":
                             lat = (time.perf_counter() - t0) * 1000
                             latencies.append(lat)
                             acks[0] += 1
+                            if acks[0] % 15 == 0 or acks[0] == expected:
+                                await set_bench_state({"status": "running", "progress": acks[0], "total": expected, "result": None, "error": None})
                             break
                         elif ev.get("type") == "error":
                             errors.append(ev.get("message", "server error"))
@@ -860,73 +865,117 @@ async def run_live_benchmark(req: BenchmarkTrigger, u: User = Depends(admin_auth
             errors.append(f"Client {cid}: {str(exc)[:100]}")
 
     start_all = time.perf_counter()
-    tasks = [single_client(i) for i in range(clients_count)]
-    await asyncio.gather(*tasks)
-    duration = time.perf_counter() - start_all
+    try:
+        tasks = [single_client(i) for i in range(clients_count)]
+        await asyncio.gather(*tasks)
+        duration = time.perf_counter() - start_all
 
-    latencies.sort()
-    def pct(p):
-        if not latencies:
-            return 0.0
-        idx = int(round(p * (len(latencies) - 1)))
-        return round(latencies[idx], 2)
+        latencies.sort()
+        def pct(p):
+            if not latencies:
+                return 0.0
+            idx = int(round(p * (len(latencies) - 1)))
+            return round(latencies[idx], 2)
 
-    expected = clients_count * msgs_per_client
-    acknowledged = acks[0]
-    throughput = round(acknowledged / duration, 2) if duration > 0 else 0.0
-    mean_lat = round(statistics.mean(latencies), 2) if latencies else 0.0
-    median_lat = pct(0.50)
-    p95_lat = pct(0.95)
-    max_lat = round(max(latencies), 2) if latencies else 0.0
+        acknowledged = acks[0]
+        throughput = round(acknowledged / duration, 2) if duration > 0 else 0.0
+        mean_lat = round(statistics.mean(latencies), 2) if latencies else 0.0
+        median_lat = pct(0.50)
+        p95_lat = pct(0.95)
+        max_lat = round(max(latencies), 2) if latencies else 0.0
 
-    result = {
-        "clients": clients_count,
-        "messages_per_client": msgs_per_client,
-        "expected_messages": expected,
-        "connected_clients": connected[0],
-        "failed_connections": clients_count - connected[0],
-        "acknowledged": acknowledged,
-        "failed_messages": expected - acknowledged,
-        "duration_seconds": round(duration, 3),
-        "throughput_msg_per_sec": throughput,
-        "mean_latency_ms": mean_lat,
-        "median_latency_ms": median_lat,
-        "p95_latency_ms": p95_lat,
-        "max_latency_ms": max_lat,
-        "gateway_distribution": gateway_dist,
-        "errors_count": len(errors),
-        "sample_errors": errors[:5]
-    }
-
-    async with Session() as s:
-        run_name = f"{clients_count} clients x {msgs_per_client} msgs ({throughput} msg/s)"
-        item = BenchmarkRun(
-            name=run_name,
-            clients=clients_count,
-            messages_per_client=msgs_per_client,
-            total_messages=expected,
-            results=json.dumps(result)
-        )
-        s.add(item)
-        await s.commit()
-        await s.refresh(item)
-
-        await record_log(
-            "BENCHMARK",
-            "INFO",
-            "benchmark",
-            f"Live Dynamic Benchmark completed: {run_name}"
-        )
-
-        return {
-            "id": item.id,
-            "name": item.name,
+        result = {
             "clients": clients_count,
             "messages_per_client": msgs_per_client,
-            "total_messages": expected,
-            "results": result,
-            "created_at": item.created_at.isoformat() + "Z"
+            "expected_messages": expected,
+            "connected_clients": connected[0],
+            "failed_connections": clients_count - connected[0],
+            "acknowledged": acknowledged,
+            "failed_messages": expected - acknowledged,
+            "duration_seconds": round(duration, 3),
+            "throughput_msg_per_sec": throughput,
+            "mean_latency_ms": mean_lat,
+            "median_latency_ms": median_lat,
+            "p95_latency_ms": p95_lat,
+            "max_latency_ms": max_lat,
+            "gateway_distribution": gateway_dist,
+            "errors_count": len(errors),
+            "sample_errors": errors[:5]
         }
+
+        async with Session() as s:
+            run_name = f"{clients_count} clients x {msgs_per_client} msgs ({throughput} msg/s)"
+            item = BenchmarkRun(
+                name=run_name,
+                clients=clients_count,
+                messages_per_client=msgs_per_client,
+                total_messages=expected,
+                results=json.dumps(result)
+            )
+            s.add(item)
+            await s.commit()
+            await s.refresh(item)
+
+            await record_log(
+                "BENCHMARK",
+                "INFO",
+                "benchmark",
+                f"Live Dynamic Benchmark completed: {run_name}"
+            )
+
+            res_payload = {
+                "id": item.id,
+                "name": item.name,
+                "clients": clients_count,
+                "messages_per_client": msgs_per_client,
+                "total_messages": expected,
+                "results": result,
+                "created_at": item.created_at.isoformat() + "Z"
+            }
+            await set_bench_state({"status": "completed", "progress": expected, "total": expected, "result": res_payload, "error": None})
+    except Exception as e:
+        await set_bench_state({"status": "error", "progress": acks[0], "total": expected, "result": None, "error": str(e)})
+
+@app.post("/api/admin/benchmarks/run")
+async def run_live_benchmark(req: BenchmarkTrigger, u: User = Depends(admin_auth)):
+    clients_count = req.clients
+    msgs_per_client = req.messages_per_client
+    room_name = req.room.strip().lower()
+
+    curr = await get_bench_state()
+    if curr.get("status") == "running":
+        raise HTTPException(409, "A benchmark is currently running. Please wait for it to complete.")
+
+    async with Session() as s:
+        existing = await s.scalar(select(Room).where(Room.name == room_name))
+        if not existing:
+            s.add(Room(name=room_name, is_private=False, created_by=u.username))
+            await s.commit()
+
+    bench_token = create_access_token(u)
+    expected = clients_count * msgs_per_client
+
+    await set_bench_state({
+        "status": "running",
+        "progress": 0,
+        "total": expected,
+        "result": None,
+        "error": None
+    })
+
+    asyncio.create_task(_execute_benchmark_bg(
+        clients_count, msgs_per_client, room_name, bench_token, expected, u.username
+    ))
+
+    return {
+        "status": "running",
+        "total_messages": expected,
+        "message": f"Benchmark with {expected} messages launched in background"
+    }
+
+@app.get("/api/admin/benchmarks/progress")
+async def get_benchmark_progress(u: User = Depends(admin_auth)):
+    return await get_bench_state()
 
 @app.post("/api/admin/benchmarks")
 async def save_benchmark(b: BenchmarkReport, u: User = Depends(admin_auth)):

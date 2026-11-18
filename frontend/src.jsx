@@ -388,7 +388,8 @@ function App() {
   const handleRunLiveBenchmark = async (e) => {
     e.preventDefault();
     setBenchRunning(true);
-    showNotification(`Starting live stress test with ${benchClients} concurrent clients (${benchClients * benchMessages} msgs)...`, 'info');
+    const totalMsgs = benchClients * benchMessages;
+    showNotification(`Starting live stress test with ${benchClients} concurrent clients (${totalMsgs} msgs)...`, 'info');
     try {
       const runRes = await apiFetch('/api/admin/benchmarks/run', {
         method: 'POST',
@@ -398,9 +399,27 @@ function App() {
           room: benchRoom
         })
       });
-      setLatestLiveRun(runRes);
-      setBenchmarksData(prev => [runRes, ...prev]);
-      showNotification(`Benchmark completed! Throughput: ${runRes.results.throughput_msg_per_sec} msg/s (P95: ${runRes.results.p95_latency_ms}ms)`, 'success');
+
+      if (runRes.status === 'running') {
+        // Asynchronous benchmark polling (prevents HTTP timeout on large message counts)
+        let done = false;
+        while (!done) {
+          await new Promise(r => setTimeout(r, 1500));
+          const prog = await apiFetch('/api/admin/benchmarks/progress');
+          if (prog.status === 'completed' && prog.result) {
+            done = true;
+            setLatestLiveRun(prog.result);
+            setBenchmarksData(prev => [prog.result, ...prev]);
+            showNotification(`Benchmark completed! Throughput: ${prog.result.results.throughput_msg_per_sec} msg/s (P95: ${prog.result.results.p95_latency_ms}ms)`, 'success');
+          } else if (prog.status === 'error') {
+            throw new Error(prog.error || 'Benchmark execution error');
+          }
+        }
+      } else {
+        setLatestLiveRun(runRes);
+        setBenchmarksData(prev => [runRes, ...prev]);
+        showNotification(`Benchmark completed! Throughput: ${runRes.results.throughput_msg_per_sec} msg/s (P95: ${runRes.results.p95_latency_ms}ms)`, 'success');
+      }
     } catch (err) {
       showNotification(`Benchmark execution failed: ${err.message}`, 'error');
     } finally {
