@@ -10,6 +10,26 @@ import {
 } from 'lucide-react';
 import './style.css';
 
+// Helper to format FastAPI / Pydantic validation errors cleanly
+const extractErrorMessage = (data, defaultMsg) => {
+  if (!data) return defaultMsg;
+  if (typeof data === 'string') return data;
+  if (typeof data.detail === 'string') return data.detail;
+  if (Array.isArray(data.detail)) {
+    return data.detail.map(item => {
+      if (typeof item === 'string') return item;
+      const field = item.loc ? item.loc[item.loc.length - 1] : '';
+      const msg = item.msg || JSON.stringify(item);
+      return field ? `${field}: ${msg}` : msg;
+    }).join('; ');
+  }
+  if (data.detail && typeof data.detail === 'object') {
+    return data.detail.msg || data.detail.message || JSON.stringify(data.detail);
+  }
+  if (typeof data.message === 'string') return data.message;
+  return defaultMsg;
+};
+
 function App() {
   const [token, setToken] = useState(() => localStorage.getItem('token') || '');
   const [me, setMe] = useState(() => {
@@ -111,7 +131,7 @@ function App() {
     }
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      throw new Error(data.detail || data.message || `Request failed (${res.status})`);
+      throw new Error(extractErrorMessage(data, `Request failed (${res.status})`));
     }
     return data;
   };
@@ -564,9 +584,10 @@ function App() {
               <input
                 type="text"
                 required
+                minLength={3}
                 value={username}
                 onChange={e => setUsername(e.target.value)}
-                placeholder="Enter username"
+                placeholder={isRegisterMode ? "Enter username (min 3 characters)" : "Enter username"}
               />
             </div>
             <div className="form-group">
@@ -574,9 +595,10 @@ function App() {
               <input
                 type="password"
                 required
+                minLength={isRegisterMode ? 6 : 1}
                 value={password}
                 onChange={e => setPassword(e.target.value)}
-                placeholder="Enter password"
+                placeholder={isRegisterMode ? "Enter password (min 6 characters)" : "Enter password"}
               />
             </div>
 
