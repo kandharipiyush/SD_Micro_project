@@ -216,6 +216,7 @@ function App() {
           wsBase = `${protocol}//${window.location.host}`;
         }
       }
+      wsBase = wsBase.replace(/\/ws\/?$/, '').replace(/\/+$/, '');
       const wsUrl = `${wsBase}/ws/${currentRoom}?token=${encodeURIComponent(token)}`;
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
