@@ -90,17 +90,34 @@ def create_access_token(u: User) -> str:
         algorithm="HS256"
     )
 
-async def user_auth(authorization: str | None = Header(default=None)) -> User:
-    if not authorization or not authorization.startswith("Bearer "):
+_user_cache: dict[str, tuple[User, float]] = {}
+
+async def user_auth(authorization: str | None = Header(default=None), token: str | None = Query(default=None)) -> User:
+    auth = authorization
+    if not auth and token:
+        auth = f"Bearer {token}"
+    if not auth or not auth.startswith("Bearer "):
         raise HTTPException(401, "Bearer token required")
     try:
-        claims = jwt.decode(authorization[7:], SECRET, algorithms=["HS256"])
+        claims = jwt.decode(auth[7:], SECRET, algorithms=["HS256"])
     except JWTError:
         raise HTTPException(401, "Invalid token")
+
+    uname = claims.get("sub")
+    if not uname:
+        raise HTTPException(401, "Invalid token subject")
+
+    now = time.time()
+    cached = _user_cache.get(uname)
+    if cached and (now - cached[1] < 120.0):
+        return cached[0]
+
     async with Session() as s:
-        u = await s.scalar(select(User).where(User.username == claims["sub"]))
+        u = await s.scalar(select(User).where(User.username == uname))
         if not u:
             raise HTTPException(401, "Unknown user")
+        s.expunge(u)
+        _user_cache[uname] = (u, now)
         return u
 
 async def admin_auth(u: User = Depends(user_auth)) -> User:
@@ -108,11 +125,14 @@ async def admin_auth(u: User = Depends(user_auth)) -> User:
         raise HTTPException(403, "Administrator access required")
     return u
 
-async def admin_claims(authorization: str | None = Header(default=None)):
-    if not authorization or not authorization.startswith("Bearer "):
+async def admin_claims(authorization: str | None = Header(default=None), token: str | None = Query(default=None)):
+    auth = authorization
+    if not auth and token:
+        auth = f"Bearer {token}"
+    if not auth or not auth.startswith("Bearer "):
         raise HTTPException(401, "Bearer token required")
     try:
-        claims = jwt.decode(authorization[7:], SECRET, algorithms=["HS256"])
+        claims = jwt.decode(auth[7:], SECRET, algorithms=["HS256"])
     except JWTError:
         raise HTTPException(401, "Invalid token")
     if claims.get("role") != "admin":
@@ -1033,8 +1053,12 @@ async def list_benchmarks(u: User = Depends(admin_auth)):
 async def export_benchmark(
     benchmark_id: int,
     format: str = Query("json", regex="^(json|csv)$"),
-    u: User = Depends(admin_auth)
+    authorization: str | None = Header(default=None),
+    token: str | None = Query(default=None)
 ):
+    u = await user_auth(authorization, token)
+    if u.role != "admin":
+        raise HTTPException(403, "Administrator access required")
     async with Session() as s:
         run = await s.scalar(select(BenchmarkRun).where(BenchmarkRun.id == benchmark_id))
         if not run:

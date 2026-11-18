@@ -11,8 +11,15 @@ import {
 import './style.css';
 
 function App() {
-  const [token, setToken] = useState(localStorage.getItem('token') || '');
-  const [me, setMe] = useState(null);
+  const [token, setToken] = useState(() => localStorage.getItem('token') || '');
+  const [me, setMe] = useState(() => {
+    try {
+      const savedUser = localStorage.getItem('user');
+      return savedUser ? JSON.parse(savedUser) : null;
+    } catch {
+      return null;
+    }
+  });
   const [username, setUsername] = useState('admin');
   const [password, setPassword] = useState('AdminPass123!');
   const [isRegisterMode, setIsRegisterMode] = useState(false);
@@ -82,19 +89,24 @@ function App() {
   }, [servicesData, gatewaysList]);
 
   // Helper for API calls
-  const API_BASE = import.meta.env.VITE_BACKEND_URL || '';
+  const API_BASE = (import.meta.env.VITE_BACKEND_URL || '').replace(/\/+$/, '');
   const apiFetch = async (path, options = {}) => {
+    const currentToken = localStorage.getItem('token') || token || '';
     const headers = {
       'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(currentToken ? { Authorization: `Bearer ${currentToken}` } : {}),
       ...options.headers
     };
     const url = path.startsWith('http') ? path : `${API_BASE}${path}`;
     const res = await fetch(url, { ...options, headers });
-    if (res.status === 401) {
-      localStorage.removeItem('token');
-      setToken('');
-      setMe(null);
+    if (res.status === 401 && !path.startsWith('/api/auth/')) {
+      if (currentToken) {
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        setToken('');
+        setMe(null);
+        showNotification('Session expired. Please sign in again.', 'warning');
+      }
       throw new Error('Session expired. Please sign in again.');
     }
     const data = await res.json().catch(() => ({}));
@@ -119,9 +131,11 @@ function App() {
         method: 'POST',
         body: JSON.stringify({ username, password })
       });
+      const userObj = { username: data.username, role: data.role };
       localStorage.setItem('token', data.access_token);
+      localStorage.setItem('user', JSON.stringify(userObj));
       setToken(data.access_token);
-      setMe({ username: data.username, role: data.role });
+      setMe(userObj);
       setActiveTab(data.role === 'admin' ? 'Overview' : 'Chat');
       showNotification(`Welcome, ${data.username}! Signed in as ${data.role}.`, 'success');
     } catch (err) {
@@ -131,24 +145,62 @@ function App() {
 
   const handleLogout = () => {
     localStorage.removeItem('token');
+    localStorage.removeItem('user');
     setToken('');
     setMe(null);
     if (wsRef.current) wsRef.current.close();
   };
 
-  // Verify token on mount
+  // Safe Benchmark Download Handler (Never reloads page or loses auth)
+  const handleExportBenchmark = async (bId, format) => {
+    try {
+      showNotification(`Downloading ${format.toUpperCase()} export for Run #${bId}...`, 'info');
+      const currentToken = localStorage.getItem('token') || token;
+      const url = `${API_BASE}/api/admin/benchmarks/${bId}/export?format=${format}&token=${encodeURIComponent(currentToken)}`;
+      const res = await fetch(url, {
+        headers: {
+          ...(currentToken ? { Authorization: `Bearer ${currentToken}` } : {})
+        }
+      });
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.detail || `Export failed with status ${res.status}`);
+      }
+      const blob = await res.blob();
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.download = `benchmark_run_${bId}.${format}`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(downloadUrl);
+      showNotification(`Benchmark #${bId} exported as ${format.toUpperCase()} successfully!`, 'success');
+    } catch (err) {
+      showNotification(`Download error: ${err.message}`, 'error');
+    }
+  };
+
+  // Verify token on mount (never wipe session on transient network delays)
   useEffect(() => {
-    if (token) {
+    const currentToken = localStorage.getItem('token') || token;
+    if (currentToken) {
       apiFetch('/api/me')
         .then(user => {
           setMe(user);
+          localStorage.setItem('user', JSON.stringify(user));
           if (user.role !== 'admin' && activeTab !== 'Chat') {
             setActiveTab('Chat');
           }
         })
-        .catch(() => {
-          setToken('');
-          setMe(null);
+        .catch(err => {
+          console.warn('Background token check warning:', err.message);
+          if (err.message && err.message.toLowerCase().includes('session expired')) {
+            localStorage.removeItem('token');
+            localStorage.removeItem('user');
+            setToken('');
+            setMe(null);
+          }
         });
     }
   }, [token]);
@@ -276,7 +328,7 @@ function App() {
       if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
       if (wsRef.current) wsRef.current.close();
     };
-  }, [me, currentRoom, token]);
+  }, [me?.username, currentRoom, token]);
 
   const handleSendMessage = (e) => {
     e.preventDefault();
@@ -1619,24 +1671,22 @@ function App() {
                         <td>{new Date(b.created_at).toLocaleString()}</td>
                         <td>
                           <div className="btn-group-sm">
-                            <a
-                              href={`/api/admin/benchmarks/${b.id}/export?format=csv`}
-                              target="_blank"
-                              rel="noreferrer"
+                            <button
+                              type="button"
+                              onClick={() => handleExportBenchmark(b.id, 'csv')}
                               className="btn-secondary btn-xs"
                               title="Export CSV"
                             >
                               <Download size={12} /> CSV
-                            </a>
-                            <a
-                              href={`/api/admin/benchmarks/${b.id}/export?format=json`}
-                              target="_blank"
-                              rel="noreferrer"
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleExportBenchmark(b.id, 'json')}
                               className="btn-secondary btn-xs"
                               title="Export JSON"
                             >
                               <Download size={12} /> JSON
-                            </a>
+                            </button>
                           </div>
                         </td>
                       </tr>
