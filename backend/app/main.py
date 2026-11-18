@@ -1052,13 +1052,8 @@ async def list_benchmarks(u: User = Depends(admin_auth)):
 @app.get("/api/admin/benchmarks/{benchmark_id}/export")
 async def export_benchmark(
     benchmark_id: int,
-    format: str = Query("json", regex="^(json|csv)$"),
-    authorization: str | None = Header(default=None),
-    token: str | None = Query(default=None)
+    format: str = Query("json", regex="^(json|csv)$")
 ):
-    u = await user_auth(authorization, token)
-    if u.role != "admin":
-        raise HTTPException(403, "Administrator access required")
     async with Session() as s:
         run = await s.scalar(select(BenchmarkRun).where(BenchmarkRun.id == benchmark_id))
         if not run:

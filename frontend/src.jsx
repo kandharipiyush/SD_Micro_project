@@ -156,7 +156,7 @@ function App() {
     try {
       showNotification(`Downloading ${format.toUpperCase()} export for Run #${bId}...`, 'info');
       const currentToken = localStorage.getItem('token') || token;
-      const url = `${API_BASE}/api/admin/benchmarks/${bId}/export?format=${format}&token=${encodeURIComponent(currentToken)}`;
+      const url = `${API_BASE}/api/admin/benchmarks/${bId}/export?format=${format}`;
       const res = await fetch(url, {
         headers: {
           ...(currentToken ? { Authorization: `Bearer ${currentToken}` } : {})
