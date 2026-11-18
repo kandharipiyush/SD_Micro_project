@@ -180,18 +180,27 @@ async def on_startup():
     )
 
 # Public Health Check
+_last_db_check = 0.0
+_last_db_status = "ok"
+
 @app.get("/health")
 async def health_check():
-    db_status = "ok"
+    global _last_db_check, _last_db_status
+    now = time.time()
+    db_status = _last_db_status
+    if now - _last_db_check > 5.0:
+        try:
+            async with Session() as s:
+                await s.execute(select(1))
+            db_status = "ok"
+        except Exception:
+            db_status = "unavailable"
+        _last_db_check = now
+        _last_db_status = db_status
+    
     redis_status = "ok"
     try:
-        async with Session() as s:
-            await s.execute(select(1))
-    except Exception:
-        db_status = "unavailable"
-    
-    try:
-        await asyncio.wait_for(redis.ping(), timeout=0.8)
+        await asyncio.wait_for(redis.ping(), timeout=1.5)
     except Exception:
         redis_status = "unavailable"
 
@@ -479,7 +488,7 @@ async def fetch_dynamic_gateways():
 
         url = f"http://{name}:8000/health"
         try:
-            async with httpx.AsyncClient(timeout=0.4) as client:
+            async with httpx.AsyncClient(timeout=3.0) as client:
                 r = await client.get(url)
                 if r.status_code == 200:
                     d = r.json()

@@ -8,6 +8,8 @@ services:
     container_name: socketscale-gateway-a
     restart: unless-stopped
     build: ./backend
+    volumes:
+      - ./backend/app:/app/app:rw
     environment: &backend-env
       INSTANCE_ID: gateway-a
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://socketscale:socketscale@postgres:5432/socketscale}
@@ -22,6 +24,8 @@ services:
     container_name: socketscale-gateway-b
     restart: unless-stopped
     build: ./backend
+    volumes:
+      - ./backend/app:/app/app:rw
     environment:
       <<: *backend-env
       INSTANCE_ID: gateway-b
@@ -33,6 +37,8 @@ services:
     container_name: socketscale-gateway-c
     restart: unless-stopped
     build: ./backend
+    volumes:
+      - ./backend/app:/app/app:rw
     environment:
       <<: *backend-env
       INSTANCE_ID: gateway-c
@@ -45,6 +51,8 @@ services:
     restart: unless-stopped
     build: ./backend
     command: ["python", "-m", "app.worker"]
+    volumes:
+      - ./backend/app:/app/app:rw
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://socketscale:socketscale@postgres:5432/socketscale}
       REDIS_URL: redis://redis:6379/0
