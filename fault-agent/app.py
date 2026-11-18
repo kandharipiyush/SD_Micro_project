@@ -19,6 +19,7 @@ app.add_middleware(
 cli = docker.from_env()
 TOKEN = os.getenv("ADMIN_TOKEN", "local-fault-token-change-me")
 JWT_SECRET = os.getenv("JWT_SECRET", "local-demo-secret-change-me")
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+psycopg://socketscale:socketscale@postgres:5432/socketscale")
 
 operation_history = []
 
@@ -156,7 +157,7 @@ def add_gateway_node(node_name: str | None = None, x_admin_token: str | None = H
             restart_policy={"Name": "unless-stopped"},
             environment={
                 "INSTANCE_ID": node_name,
-                "DATABASE_URL": "postgresql+psycopg://socketscale:socketscale@postgres:5432/socketscale",
+                "DATABASE_URL": DATABASE_URL,
                 "REDIS_URL": "redis://redis:6379/0",
                 "JWT_SECRET": JWT_SECRET,
                 "FAULT_ADMIN_TOKEN": TOKEN
@@ -248,6 +249,20 @@ def list_services(x_admin_token: str | None = Header(default=None), authorizatio
 
     return out
 
+import urllib.request
+
+def wait_for_gateway_ready(node_name: str, max_wait: float = 5.0):
+    url = f"http://{node_name}:8000/health"
+    start = time.time()
+    while time.time() - start < max_wait:
+        try:
+            with urllib.request.urlopen(url, timeout=0.8) as r:
+                if r.getcode() == 200:
+                    return True
+        except Exception:
+            time.sleep(0.3)
+    return False
+
 @app.post("/services/{name}/{action}")
 def control_service(name: str, action: str, x_admin_token: str | None = Header(default=None), authorization: str | None = Header(default=None)):
     verify_token(x_admin_token, authorization)
@@ -265,15 +280,21 @@ def control_service(name: str, action: str, x_admin_token: str | None = Header(d
     for target in targets:
         c = get_container(target)
         try:
-            if action in {"stop", "restart"}:
-                execute_container_action_async(c, action, delay=0.3)
+            if action == "stop":
+                execute_container_action_async(c, action, delay=0.2)
                 results.append({"service": target, "action": action, "status": "accepted"})
+            elif action == "restart":
+                c.restart(timeout=2)
+                if c.name.startswith("socketscale-gateway-"):
+                    wait_for_gateway_ready(target)
+                    sync_nginx_upstreams()
+                results.append({"service": target, "action": action, "status": "success"})
             else:
                 c.start()
-                results.append({"service": target, "action": action, "status": "success"})
                 if c.name.startswith("socketscale-gateway-"):
-                    time.sleep(0.5)
+                    wait_for_gateway_ready(target)
                     sync_nginx_upstreams()
+                results.append({"service": target, "action": action, "status": "success"})
         except Exception as exc:
             results.append({"service": target, "action": action, "status": "error", "detail": str(exc)[:200]})
 

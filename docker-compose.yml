@@ -64,12 +64,14 @@ services:
     container_name: socketscale-fault-agent
     restart: unless-stopped
     build: ./fault-agent
-    environment:
-      ADMIN_TOKEN: ${FAULT_ADMIN_TOKEN:-local-fault-token-change-me}
-      JWT_SECRET: ${JWT_SECRET:-local-demo-secret-change-me}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./nginx:/app/nginx:rw
+      - ./fault-agent:/app:rw
+    environment:
+      ADMIN_TOKEN: ${FAULT_ADMIN_TOKEN:-local-fault-token-change-me}
+      JWT_SECRET: ${JWT_SECRET:-local-demo-secret-change-me}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://socketscale:socketscale@postgres:5432/socketscale}
 
   nginx:
     container_name: socketscale-nginx

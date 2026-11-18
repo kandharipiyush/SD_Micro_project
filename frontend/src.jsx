@@ -304,6 +304,9 @@ function App() {
     try {
       const res = await apiFetch(`/api/admin/fault/services/${service}/${action}`, { method: 'POST' });
       showNotification(`Operation ${action.toUpperCase()} on '${service}' executed successfully (${res.duration_ms || 0}ms)`, 'success');
+      if (action === 'start' || action === 'restart') {
+        await new Promise(r => setTimeout(r, 1200));
+      }
       const updated = await apiFetch('/api/admin/fault/services');
       setServicesData(updated);
       const gwRes = await apiFetch('/api/admin/gateways');
