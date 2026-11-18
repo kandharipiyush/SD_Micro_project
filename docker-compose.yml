@@ -10,7 +10,7 @@ services:
     build: ./backend
     environment: &backend-env
       INSTANCE_ID: gateway-a
-      DATABASE_URL: postgresql+psycopg://socketscale:socketscale@postgres:5432/socketscale
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://socketscale:socketscale@postgres:5432/socketscale}
       REDIS_URL: redis://redis:6379/0
       JWT_SECRET: ${JWT_SECRET:-local-demo-secret-change-me}
       FAULT_ADMIN_TOKEN: ${FAULT_ADMIN_TOKEN:-local-fault-token-change-me}
@@ -46,7 +46,7 @@ services:
     build: ./backend
     command: ["python", "-m", "app.worker"]
     environment:
-      DATABASE_URL: postgresql+psycopg://socketscale:socketscale@postgres:5432/socketscale
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://socketscale:socketscale@postgres:5432/socketscale}
       REDIS_URL: redis://redis:6379/0
     depends_on:
       postgres: {condition: service_healthy}
