@@ -324,7 +324,8 @@ def control_stack(action: str, x_admin_token: str | None = Header(default=None),
         raise HTTPException(400, "Invalid stack action")
 
     gw_names = [g["node_name"] for g in get_all_gateways()]
-    order = ["postgres", "redis"] + gw_names + ["worker", "frontend", "nginx"]
+    # Keep nginx and frontend alive so the browser connection is never broken!
+    order = ["redis"] + gw_names + ["worker"]
     if action == "stop":
         order = list(reversed(order))
 
@@ -334,13 +335,17 @@ def control_stack(action: str, x_admin_token: str | None = Header(default=None),
         try:
             c = get_container(name)
             if action in {"stop", "restart"}:
-                execute_container_action_async(c, action, delay=0.4)
+                execute_container_action_async(c, action, delay=0.1)
                 results.append({"service": name, "status": "accepted"})
             else:
                 c.start()
                 results.append({"service": name, "status": "success"})
         except Exception as exc:
             results.append({"service": name, "status": "error", "detail": str(exc)[:160]})
+
+    if action == "start":
+        time.sleep(1.5)
+        sync_nginx_upstreams()
 
     duration_ms = round((time.time() - start_time) * 1000, 2)
     return {
@@ -355,7 +360,7 @@ def recovery_start(x_admin_token: str | None = Header(default=None), authorizati
     verify_token(x_admin_token, authorization)
 
     gw_names = [g["node_name"] for g in get_all_gateways()]
-    order = ["postgres", "redis"] + gw_names + ["worker", "frontend", "nginx"]
+    order = ["redis"] + gw_names + ["worker"]
     results = []
     start_time = time.time()
     for name in order:
@@ -365,8 +370,9 @@ def recovery_start(x_admin_token: str | None = Header(default=None), authorizati
         except Exception as exc:
             results.append({"service": name, "status": "error", "detail": str(exc)[:160]})
 
-    duration_ms = round((time.time() - start_time) * 1000, 2)
+    time.sleep(1.5)
     sync_nginx_upstreams()
+    duration_ms = round((time.time() - start_time) * 1000, 2)
     return {
         "action": "start",
         "duration_ms": duration_ms,

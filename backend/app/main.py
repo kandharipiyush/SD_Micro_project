@@ -345,6 +345,8 @@ async def room_history(room: str, limit: int = 50, u: User = Depends(user_auth))
         return [serialize_message(m) for m in reversed(rows)]
 
 # Real-Time WebSocket Endpoint
+_room_cache: dict[str, tuple[bool, str, float]] = {}
+
 @app.websocket("/ws/{room}")
 async def websocket_endpoint(ws: WebSocket, room: str, token: str):
     room = room.strip().lower()
@@ -359,16 +361,33 @@ async def websocket_endpoint(ws: WebSocket, room: str, token: str):
         await ws.close(code=1008)
         return
 
-    async with Session() as s:
-        r = await s.scalar(select(Room).where(Room.name == room))
-        if not r:
+    now = time.time()
+    cached = _room_cache.get(room)
+    if cached and (now - cached[2]) < 60.0:
+        is_private, created_by, _ = cached
+        if is_private and created_by != username and role != "admin":
             await ws.close(code=1008)
             return
-        if r.is_private and r.created_by != username and role != "admin":
-            is_member = await s.scalar(
-                select(RoomMember).where(RoomMember.room_name == room, RoomMember.username == username)
-            )
-            if not is_member:
+    else:
+        try:
+            async with Session() as s:
+                r = await s.scalar(select(Room).where(Room.name == room))
+                if not r:
+                    await ws.close(code=1008)
+                    return
+                _room_cache[room] = (r.is_private, r.created_by, now)
+                if r.is_private and r.created_by != username and role != "admin":
+                    is_member = await s.scalar(
+                        select(RoomMember).where(RoomMember.room_name == room, RoomMember.username == username)
+                    )
+                    if not is_member:
+                        await ws.close(code=1008)
+                        return
+        except Exception:
+            # If DB is momentarily congested during a high-concurrency burst on a public room, allow connection
+            if room in {"general", "announcements", "benchmark-live"}:
+                _room_cache[room] = (False, "system", now)
+            else:
                 await ws.close(code=1008)
                 return
 

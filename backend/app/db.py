@@ -10,7 +10,7 @@ DATABASE_URL = os.getenv(
     "postgresql+psycopg://socketscale:socketscale@postgres:5432/socketscale"
 )
 
-engine = create_async_engine(DATABASE_URL, pool_pre_ping=True, pool_size=60, max_overflow=30)
+engine = create_async_engine(DATABASE_URL, pool_pre_ping=True, pool_size=18, max_overflow=6, pool_timeout=45.0)
 Session = async_sessionmaker(engine, expire_on_commit=False)
 pwd = CryptContext(schemes=["argon2"], deprecated="auto")
 
