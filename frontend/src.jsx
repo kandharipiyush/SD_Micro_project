@@ -81,13 +81,15 @@ function App() {
   }, [servicesData, gatewaysList]);
 
   // Helper for API calls
+  const API_BASE = import.meta.env.VITE_BACKEND_URL || '';
   const apiFetch = async (path, options = {}) => {
     const headers = {
       'Content-Type': 'application/json',
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...options.headers
     };
-    const res = await fetch(path, { ...options, headers });
+    const url = path.startsWith('http') ? path : `${API_BASE}${path}`;
+    const res = await fetch(url, { ...options, headers });
     if (res.status === 401) {
       localStorage.removeItem('token');
       setToken('');
@@ -205,8 +207,16 @@ function App() {
       if (!isSubscribed) return;
       setSocketStatus('connecting');
 
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${protocol}//${window.location.host}/ws/${currentRoom}?token=${encodeURIComponent(token)}`;
+      let wsBase = import.meta.env.VITE_WS_URL;
+      if (!wsBase) {
+        if (API_BASE) {
+          wsBase = API_BASE.replace(/^http/, 'ws');
+        } else {
+          const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+          wsBase = `${protocol}//${window.location.host}`;
+        }
+      }
+      const wsUrl = `${wsBase}/ws/${currentRoom}?token=${encodeURIComponent(token)}`;
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
