@@ -180,7 +180,7 @@ async def on_startup():
     )
 
 # Public Health Check
-_last_db_check = 0.0
+_last_db_check = time.time()
 _last_db_status = "ok"
 
 @app.get("/health")
@@ -937,14 +937,17 @@ async def _execute_benchmark_bg(clients_count: int, msgs_per_client: int, room_n
         await set_bench_state({"status": "error", "progress": acks[0], "total": expected, "result": None, "error": str(e)})
 
 @app.post("/api/admin/benchmarks/run")
-async def run_live_benchmark(req: BenchmarkTrigger, u: User = Depends(admin_auth)):
+async def run_live_benchmark(req: BenchmarkTrigger, force: bool = False, u: User = Depends(admin_auth)):
     clients_count = req.clients
     msgs_per_client = req.messages_per_client
     room_name = req.room.strip().lower()
 
     curr = await get_bench_state()
-    if curr.get("status") == "running":
-        raise HTTPException(409, "A benchmark is currently running. Please wait for it to complete.")
+    if curr.get("status") == "running" and not force:
+        start_t = curr.get("started_at", 0)
+        # If running less than 180s, signal conflict with active progress
+        if time.time() - start_t < 180:
+            raise HTTPException(409, detail=f"A benchmark is currently running ({curr.get('progress', 0)}/{curr.get('total', 0)} msgs). Please wait for it to complete.")
 
     async with Session() as s:
         existing = await s.scalar(select(Room).where(Room.name == room_name))
@@ -959,6 +962,7 @@ async def run_live_benchmark(req: BenchmarkTrigger, u: User = Depends(admin_auth
         "status": "running",
         "progress": 0,
         "total": expected,
+        "started_at": time.time(),
         "result": None,
         "error": None
     })
@@ -972,6 +976,11 @@ async def run_live_benchmark(req: BenchmarkTrigger, u: User = Depends(admin_auth
         "total_messages": expected,
         "message": f"Benchmark with {expected} messages launched in background"
     }
+
+@app.post("/api/admin/benchmarks/reset")
+async def reset_benchmark_state(u: User = Depends(admin_auth)):
+    await set_bench_state({"status": "idle", "progress": 0, "total": 0, "result": None, "error": None})
+    return {"status": "idle", "message": "Benchmark state cleared successfully"}
 
 @app.get("/api/admin/benchmarks/progress")
 async def get_benchmark_progress(u: User = Depends(admin_auth)):

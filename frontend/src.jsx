@@ -50,6 +50,7 @@ function App() {
   const [benchMessages, setBenchMessages] = useState(20);
   const [benchRoom, setBenchRoom] = useState('benchmark-live');
   const [benchRunning, setBenchRunning] = useState(false);
+  const [benchProgress, setBenchProgress] = useState(null);
   const [latestLiveRun, setLatestLiveRun] = useState(null);
 
   // Confirmation Modal
@@ -175,6 +176,12 @@ function App() {
         apiFetch('/api/admin/infrastructure').then(setInfraData).catch(() => {});
       } else if (activeTab === 'Benchmarks') {
         apiFetch('/api/admin/benchmarks').then(setBenchmarksData).catch(() => {});
+        apiFetch('/api/admin/benchmarks/progress').then(prog => {
+          if (prog && prog.status === 'running') {
+            setBenchRunning(true);
+            setBenchProgress(prog);
+          }
+        }).catch(() => {});
       } else if (activeTab === 'Logs') {
         apiFetch('/api/admin/logs?limit=50').then(setLogsData).catch(() => {});
       }
@@ -384,11 +391,52 @@ function App() {
     }
   };
 
-  // Dynamic Live Benchmark Run
+  // Dynamic Live Benchmark Run & Poller
+  const pollBenchmarkProgress = async () => {
+    let done = false;
+    let fails = 0;
+    while (!done) {
+      await new Promise(r => setTimeout(r, 1200));
+      try {
+        const prog = await apiFetch('/api/admin/benchmarks/progress');
+        setBenchProgress(prog);
+        if (prog.status === 'completed' && prog.result) {
+          done = true;
+          setLatestLiveRun(prog.result);
+          setBenchmarksData(prev => [prog.result, ...prev]);
+          setBenchRunning(false);
+          setBenchProgress(null);
+          showNotification(`Benchmark completed! Throughput: ${prog.result.results.throughput_msg_per_sec} msg/s (P95: ${prog.result.results.p95_latency_ms}ms)`, 'success');
+          return;
+        } else if (prog.status === 'error') {
+          done = true;
+          setBenchRunning(false);
+          setBenchProgress(null);
+          showNotification(`Benchmark error: ${prog.error || 'Execution failed'}`, 'error');
+          return;
+        } else if (prog.status === 'idle') {
+          done = true;
+          setBenchRunning(false);
+          setBenchProgress(null);
+          return;
+        }
+      } catch (e) {
+        fails++;
+        if (fails > 8) {
+          done = true;
+          setBenchRunning(false);
+          setBenchProgress(null);
+          return;
+        }
+      }
+    }
+  };
+
   const handleRunLiveBenchmark = async (e) => {
     e.preventDefault();
     setBenchRunning(true);
     const totalMsgs = benchClients * benchMessages;
+    setBenchProgress({ status: 'running', progress: 0, total: totalMsgs });
     showNotification(`Starting live stress test with ${benchClients} concurrent clients (${totalMsgs} msgs)...`, 'info');
     try {
       const runRes = await apiFetch('/api/admin/benchmarks/run', {
@@ -401,29 +449,34 @@ function App() {
       });
 
       if (runRes.status === 'running') {
-        // Asynchronous benchmark polling (prevents HTTP timeout on large message counts)
-        let done = false;
-        while (!done) {
-          await new Promise(r => setTimeout(r, 1500));
-          const prog = await apiFetch('/api/admin/benchmarks/progress');
-          if (prog.status === 'completed' && prog.result) {
-            done = true;
-            setLatestLiveRun(prog.result);
-            setBenchmarksData(prev => [prog.result, ...prev]);
-            showNotification(`Benchmark completed! Throughput: ${prog.result.results.throughput_msg_per_sec} msg/s (P95: ${prog.result.results.p95_latency_ms}ms)`, 'success');
-          } else if (prog.status === 'error') {
-            throw new Error(prog.error || 'Benchmark execution error');
-          }
-        }
+        await pollBenchmarkProgress();
       } else {
         setLatestLiveRun(runRes);
         setBenchmarksData(prev => [runRes, ...prev]);
+        setBenchRunning(false);
+        setBenchProgress(null);
         showNotification(`Benchmark completed! Throughput: ${runRes.results.throughput_msg_per_sec} msg/s (P95: ${runRes.results.p95_latency_ms}ms)`, 'success');
       }
     } catch (err) {
-      showNotification(`Benchmark execution failed: ${err.message}`, 'error');
-    } finally {
+      if (err.message && err.message.includes('currently running')) {
+        showNotification('Connected to active benchmark runner in progress...', 'info');
+        await pollBenchmarkProgress();
+      } else {
+        showNotification(`Benchmark execution failed: ${err.message}`, 'error');
+        setBenchRunning(false);
+        setBenchProgress(null);
+      }
+    }
+  };
+
+  const handleResetBenchmark = async () => {
+    try {
+      await apiFetch('/api/admin/benchmarks/reset', { method: 'POST' });
       setBenchRunning(false);
+      setBenchProgress(null);
+      showNotification('Benchmark state cleared successfully.', 'info');
+    } catch (err) {
+      showNotification(`Reset failed: ${err.message}`, 'error');
     }
   };
 
@@ -861,8 +914,8 @@ function App() {
                         <h4>{g.node_name.toUpperCase()}</h4>
                       </div>
                       <div className="header-tags">
-                        <span className={`status-pill ${g.status === 'ok' ? 'green' : 'amber'}`}>
-                          {g.status?.toUpperCase()}
+                        <span className={`status-pill ${g.status === 'ok' ? 'green' : (g.status === 'stopped' ? 'red' : 'amber')}`}>
+                          {g.status === 'stopped' ? 'CRASHED' : g.status?.toUpperCase()}
                         </span>
                       </div>
                     </div>
@@ -886,8 +939,8 @@ function App() {
                       </div>
                       <div className="metric-row">
                         <span>Postgres / Redis:</span>
-                        <strong className="green">
-                          {g.postgres === 'ok' && g.redis === 'ok' ? 'OK / OK' : 'Degraded'}
+                        <strong className={g.status === 'stopped' ? 'amber' : (g.postgres === 'ok' && g.redis === 'ok' ? 'green' : 'amber')}>
+                          {g.status === 'stopped' ? 'Offline (Crashed)' : (g.postgres === 'ok' && g.redis === 'ok' ? 'OK / OK' : 'Degraded')}
                         </strong>
                       </div>
                     </div>
@@ -1065,8 +1118,8 @@ function App() {
                         <h4>{g.node_name.toUpperCase()}</h4>
                         <p className="muted">Elastic FastAPI gateway node</p>
                       </div>
-                      <span className={`status-pill ${g.status === 'ok' ? 'green' : 'amber'}`}>
-                        {g.status}
+                      <span className={`status-pill ${g.status === 'ok' ? 'green' : (g.status === 'stopped' ? 'red' : 'amber')}`}>
+                        {g.status === 'stopped' ? 'CRASHED' : g.status?.toUpperCase()}
                       </span>
                     </div>
 
@@ -1148,8 +1201,8 @@ function App() {
                           <p className="muted">{item.desc}</p>
                         </div>
                         {currentSvc && (
-                          <span className={`status-pill ${isRunning ? 'green' : 'amber'}`}>
-                            {currentSvc.status}
+                          <span className={`status-pill ${isRunning ? 'green' : 'red'}`}>
+                            {isRunning ? 'RUNNING' : 'STOPPED'}
                           </span>
                         )}
                       </div>
@@ -1305,29 +1358,70 @@ function App() {
                   </div>
                 </div>
 
+                {benchProgress && benchProgress.status === 'running' && (
+                  <div style={{ margin: '1.25rem 0 0.5rem 0', padding: '1rem', background: 'rgba(99, 102, 241, 0.08)', borderRadius: '8px', border: '1px solid rgba(99, 102, 241, 0.25)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                      <span style={{ fontWeight: 600, color: '#4f46e5', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <RefreshCw size={14} className="spin-icon" />
+                        Stress Test In Progress: {benchProgress.progress || 0} / {benchProgress.total || (benchClients * benchMessages)} msgs ({Math.round(((benchProgress.progress || 0) / (benchProgress.total || 1)) * 100)}%)
+                      </span>
+                      <button
+                        type="button"
+                        className="btn-secondary btn-sm"
+                        style={{ padding: '3px 8px', fontSize: '11px', cursor: 'pointer' }}
+                        onClick={handleResetBenchmark}
+                      >
+                        Reset / Cancel
+                      </button>
+                    </div>
+                    <div style={{ width: '100%', height: '8px', background: 'rgba(203, 213, 225, 0.6)', borderRadius: '4px', overflow: 'hidden' }}>
+                      <div
+                        style={{
+                          width: `${Math.min(100, Math.round(((benchProgress.progress || 0) / (benchProgress.total || 1)) * 100))}%`,
+                          height: '100%',
+                          background: 'linear-gradient(90deg, #6366f1, #3b82f6)',
+                          transition: 'width 0.25s ease'
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
+
                 <div className="bench-actions-row">
                   <div className="expected-badge">
                     <span>Total Expected Messages:</span>
                     <strong>{benchClients * benchMessages} msgs</strong>
                   </div>
 
-                  <button
-                    type="submit"
-                    className="btn-primary btn-lg"
-                    disabled={benchRunning}
-                  >
-                    {benchRunning ? (
-                      <>
-                        <RefreshCw size={18} className="spin-icon" />
-                        <span>Running Stress Test Across Nodes...</span>
-                      </>
-                    ) : (
-                      <>
-                        <Play size={18} />
-                        <span>Run Live Benchmark</span>
-                      </>
+                  <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                    {benchRunning && (
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        onClick={handleResetBenchmark}
+                        title="Force clear active benchmark state"
+                      >
+                        Reset Runner
+                      </button>
                     )}
-                  </button>
+                    <button
+                      type="submit"
+                      className="btn-primary btn-lg"
+                      disabled={benchRunning}
+                    >
+                      {benchRunning ? (
+                        <>
+                          <RefreshCw size={18} className="spin-icon" />
+                          <span>Running Stress Test ({benchProgress ? `${benchProgress.progress || 0}/${benchProgress.total || 0}` : '...'})</span>
+                        </>
+                      ) : (
+                        <>
+                          <Play size={18} />
+                          <span>Run Live Benchmark</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
                 </div>
               </form>
 

@@ -251,12 +251,12 @@ def list_services(x_admin_token: str | None = Header(default=None), authorizatio
 
 import urllib.request
 
-def wait_for_gateway_ready(node_name: str, max_wait: float = 5.0):
+def wait_for_gateway_ready(node_name: str, max_wait: float = 8.0):
     url = f"http://{node_name}:8000/health"
     start = time.time()
     while time.time() - start < max_wait:
         try:
-            with urllib.request.urlopen(url, timeout=0.8) as r:
+            with urllib.request.urlopen(url, timeout=2.5) as r:
                 if r.getcode() == 200:
                     return True
         except Exception:
